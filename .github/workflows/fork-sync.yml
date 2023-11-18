@@ -1,7 +1,9 @@
 # Workflow to sync 
 
 name: Merge upstream main branch
-on: workflow_dispatch
+on:
+  schedule:
+    - cron: '15 * * * *'
 jobs:
   merge:
     runs-on: ubuntu-latest
