@@ -151,7 +151,7 @@ export default function HazardViewer(props) {
     }, [hazardMenu1, lngLat])
 
     var chart
-    var title = hazardMenu1.menuOptions
+    var title = hazardMenu1.selectedModel
         ? hazardMenu1.selectedModel.display_name
         : ""
     if (hazardPointState.data && hazardPointState.data.length > 0) {
@@ -242,9 +242,7 @@ export default function HazardViewer(props) {
                             : hazardPointState.data
                                   .map(
                                       (d) =>
-                                          d.x +
-                                          ": " +
-                                          formatIndicatorValue(d.y)
+                                          d.x + ": " + formatIndicatorValue(d.y)
                                   )
                                   .join(", ")) +
                         (hazardMenu1.selectedModel.units &&

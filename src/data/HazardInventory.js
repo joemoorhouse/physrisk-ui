@@ -10,64 +10,38 @@ export function isJbaResource(resourcePath) {
 export const hazardMenuInitialiser = () => {
     return {
         inventory: null,
-        menus: null,
-        menuOptions: null,
-        selectedIndices: [0],
-        model: null,
+        indicatorOptions: null,
+        selectedModel: null,
     }
 }
 
+/** Menu state is held as a selection by value: { hazardTypeId, modelPath,
+ *  scenarioId, year }. An "update" merges a partial selection into the current
+ *  one, so e.g. changing indicator keeps the chosen scenario and year where the
+ *  new indicator offers them. */
 export const hazardMenuReducer = (state, action) => {
     switch (action.type) {
         case "initialise": {
-            const [menuOptions, newSelectedIndices, selection] =
-                updateMenuOptions(
-                    action.payload.inventory,
-                    action.payload.selectedIndices
-                )
-            const [hazardTypeId, model, scenario, year] = selection
-            const mapInfo = action.payload.inventory.getMapInfo(
-                hazardTypeId,
-                model.path,
-                scenario.id,
-                year
-            )
+            const inventory = action.payload.inventory
             return {
-                inventory: action.payload.inventory,
-                selectedIndices: newSelectedIndices,
-                selectedHazardTypeId: hazardTypeId,
-                selectedModel: model,
-                selectedScenario: scenario,
-                selectedYear: year,
-                mapInfo: mapInfo,
-                mapColorbar: mapInfo.colorbar,
-                menus: action.payload.menus,
-                menuOptions: menuOptions,
+                inventory: inventory,
+                indicatorOptions: inventory.getIndicatorOptions(),
+                ...resolveSelection(inventory, {}),
             }
         }
         case "update": {
-            const [menuOptions, newSelectedIndices, selection] =
-                updateMenuOptions(
-                    state.inventory,
-                    action.payload.selectedIndices
-                )
-            const [hazardTypeId, model, scenario, year] = selection
-            const mapInfo = state.inventory.getMapInfo(
-                hazardTypeId,
-                model.path,
-                scenario.id,
-                year
-            )
+            const current = {
+                hazardTypeId: state.selectedHazardTypeId,
+                modelPath: state.selectedModel.path,
+                scenarioId: state.selectedScenario.id,
+                year: state.selectedYear,
+            }
             return {
                 ...state,
-                selectedIndices: newSelectedIndices,
-                selectedHazardTypeId: hazardTypeId,
-                selectedModel: model,
-                selectedScenario: scenario,
-                selectedYear: year,
-                mapInfo: mapInfo,
-                mapColorbar: mapInfo.colorbar,
-                menuOptions: menuOptions,
+                ...resolveSelection(state.inventory, {
+                    ...current,
+                    ...action.payload,
+                }),
             }
         }
         default:
@@ -79,93 +53,78 @@ const emptyIfUndefined = (item) => {
     return item ? item : ""
 }
 
-/** Index value meaning "no explicit choice yet for this menu" (as opposed to
- *  a real index like 0), so a fresh menu can resolve its own default rather
- *  than inheriting the literal position 0 used by an unrelated prior menu. */
-export const UNSET_INDEX = -1
+/** Hazard type selected initially, if available (hazard types are listed
+ *  alphabetically, so otherwise the first in the list). */
+const defaultHazardTypeId = "RiverineInundation"
 
-/** Preferred default model per hazard type, applied only when the model menu
- *  is UNSET_INDEX (e.g. right after switching hazard type). Falls back to the
- *  top of the sorted list if no model matches. */
+/** Preferred default model per hazard type, applied when the requested model
+ *  is not of the selected hazard type (e.g. right after switching hazard type).
+ *  Falls back to the top of the sorted list if no model matches. */
 const defaultModelHints = {
     RiverineInundation: (model) => model.path.includes("river_tudelft"),
 }
 
-function resolveModelIndex(hazardTypeId, sortedModels, requestedIndex) {
-    if (requestedIndex !== UNSET_INDEX) {
-        return Math.min(requestedIndex, sortedModels.length - 1)
-    }
+function defaultModel(hazardTypeId, sortedModels) {
     const hint = defaultModelHints[hazardTypeId]
-    const hintedIndex = hint
-        ? sortedModels.findIndex((m) => hint(m.value))
-        : -1
-    return hintedIndex >= 0 ? hintedIndex : 0
+    return (hint && sortedModels.find((m) => hint(m))) || sortedModels[0]
 }
 
-/** Update options as necessary and get current selection, adjusting indices as needed. */
-export function updateMenuOptions(inventory, selectedIndices) {
-    // menu order: hazard types, models, scenarios, years
-    var newSelectedIndices = [...selectedIndices]
-    var hazardTypeId = inventory.getHazardTypeIds()[selectedIndices[0]]
-    var models = inventory.modelsOfHazardType[hazardTypeId]
+/** SSP/RCP pairs with the same nominal 2100 radiative forcing, used as a
+ *  fallback when the new model does not offer the requested scenario. */
+const equivalentScenarios = {
+    ssp126: "rcp2p6",
+    ssp245: "rcp4p5",
+    ssp370: "rcp6p0",
+    ssp585: "rcp8p5",
+    rcp2p6: "ssp126",
+    rcp4p5: "ssp245",
+    rcp6p0: "ssp370",
+    rcp8p5: "ssp585",
+}
 
-    var sortedModels = models.map((m) => {
-        return {
-            group: emptyIfUndefined(m.display_groups[0]),
-            value: m,
-        }
-    })
-    // ungrouped models ("") sort after named groups, so a standalone model
-    // doesn't preempt the multi-model entry of a named group as the default
-    sortedModels = sortedModels.sort((a, b) => {
-        if (a.group != b.group) {
-            if (a.group == "") return 1
-            if (b.group == "") return -1
-            return a.group > b.group ? 1 : -1
-        }
-        return b.value.indicator_model_gcm.includes("multi_model_0") ||
-            a.value.display_name > b.value.display_name
-            ? 1
-            : -1
-    })
-
-    var sortedModelNames = sortedModels.map((m) => {
-        return { group: m.group, value: prettifyGCM(m.value.display_name) }
-    })
-
-    newSelectedIndices[1] = resolveModelIndex(
-        hazardTypeId,
-        sortedModels,
-        selectedIndices[1]
+/** Year closest to the requested year, so that e.g. moving from historical to a
+ *  future scenario lands on the earliest projection year. */
+function nearestYear(years, year) {
+    if (year === undefined) return years[0]
+    return years.reduce((best, y) =>
+        Math.abs(y - year) < Math.abs(best - year) ? y : best
     )
-    var model = sortedModels[newSelectedIndices[1]].value
-    newSelectedIndices[2] =
-        selectedIndices[2] === UNSET_INDEX
-            ? 0
-            : Math.min(selectedIndices[2], model.scenarios.length - 1)
-    var scenario = model.scenarios[newSelectedIndices[2]]
-    newSelectedIndices[3] =
-        selectedIndices[3] === UNSET_INDEX
-            ? 0
-            : Math.min(selectedIndices[3], scenario.years.length - 1)
-    var year = scenario.years[newSelectedIndices[3]]
+}
 
-    return [
-        [
-            inventory.getHazardTypeIds().map((h) => {
-                return { group: "", value: prettifyPascalCase(h) }
-            }),
-            sortedModelNames,
-            model.scenarios.map((s) => {
-                return { group: "", value: prettifyScenarioId(s.id) }
-            }),
-            scenario.years.map((y) => {
-                return { group: "", value: y.toString() }
-            }),
-        ],
-        newSelectedIndices,
-        [hazardTypeId, model, scenario, year],
-    ]
+/** Resolve a (possibly partial or stale) selection against the inventory,
+ *  keeping each requested value where available and falling back otherwise. */
+function resolveSelection(inventory, selection) {
+    const hazardTypeIds = inventory.getHazardTypeIds()
+    const hazardTypeId = [
+        selection.hazardTypeId,
+        defaultHazardTypeId,
+        hazardTypeIds[0],
+    ].find((id) => hazardTypeIds.includes(id))
+    const sortedModels = inventory.getSortedModels(hazardTypeId)
+    const model =
+        sortedModels.find((m) => m.path === selection.modelPath) ||
+        defaultModel(hazardTypeId, sortedModels)
+    const scenario =
+        model.scenarios.find((s) => s.id === selection.scenarioId) ||
+        model.scenarios.find(
+            (s) => s.id === equivalentScenarios[selection.scenarioId]
+        ) ||
+        model.scenarios[0]
+    const year = nearestYear(scenario.years, selection.year)
+    const mapInfo = inventory.getMapInfo(
+        hazardTypeId,
+        model.path,
+        scenario.id,
+        year
+    )
+    return {
+        selectedHazardTypeId: hazardTypeId,
+        selectedModel: model,
+        selectedScenario: scenario,
+        selectedYear: year,
+        mapInfo: mapInfo,
+        mapColorbar: mapInfo.colorbar,
+    }
 }
 
 export const loadHazardMenuData = async (globals) => {
@@ -180,29 +139,7 @@ export const loadHazardMenuData = async (globals) => {
             response.data.models,
             response.data.colormaps
         )
-        const menus = [
-            {
-                name: "Hazard type",
-                minWidth: 100,
-            },
-            {
-                name: "Hazard indicator",
-                minWidth: 100,
-            },
-            {
-                name: "Scenario",
-                minWidth: 100,
-            },
-            {
-                name: "Year",
-                minWidth: 100,
-            },
-        ]
-        return {
-            inventory: inventory,
-            menus: menus,
-            selectedIndices: [0, UNSET_INDEX, UNSET_INDEX, UNSET_INDEX],
-        }
+        return { inventory: inventory }
     } catch (error) {
         console.log(error)
     }
@@ -222,7 +159,70 @@ export class HazardInventory {
 
     /** Return hazard event types. */
     getHazardTypeIds() {
-        return Object.keys(this.modelsOfHazardType)
+        return Object.keys(this.modelsOfHazardType).sort((a, b) =>
+            prettifyPascalCase(a).localeCompare(prettifyPascalCase(b))
+        )
+    }
+
+    /** Models of hazard type, sorted by display group. */
+    getSortedModels(hazardTypeId) {
+        const groupOf = (m) => emptyIfUndefined(m.display_groups[0])
+        // ungrouped models ("") sort after named groups, so a standalone model
+        // doesn't preempt the multi-model entry of a named group as the default
+        return [...this.modelsOfHazardType[hazardTypeId]].sort((a, b) => {
+            if (groupOf(a) != groupOf(b)) {
+                if (groupOf(a) == "") return 1
+                if (groupOf(b) == "") return -1
+                return groupOf(a) > groupOf(b) ? 1 : -1
+            }
+            return b.indicator_model_gcm.includes("multi_model_0") ||
+                a.display_name > b.display_name
+                ? 1
+                : -1
+        })
+    }
+
+    /** Flat list of options for the hazard indicator picker, across all hazard
+     *  types. Display groups with more than one model get a "group" option
+     *  placed before their "model" options, so the picker can collapse them. */
+    getIndicatorOptions() {
+        const options = []
+        this.getHazardTypeIds().forEach((hazardTypeId) => {
+            const hazardTypeLabel = prettifyPascalCase(hazardTypeId)
+            const models = this.getSortedModels(hazardTypeId)
+            const groupSizes = {}
+            models.forEach((m) => {
+                const group = emptyIfUndefined(m.display_groups[0])
+                groupSizes[group] = (groupSizes[group] ?? 0) + 1
+            })
+            let previousGroup = null
+            models.forEach((m) => {
+                const group = emptyIfUndefined(m.display_groups[0])
+                const isGrouped = group != "" && groupSizes[group] > 1
+                if (isGrouped && group != previousGroup) {
+                    options.push({
+                        kind: "group",
+                        id: hazardTypeId + "/" + group,
+                        hazardTypeId,
+                        hazardTypeLabel,
+                        label: group,
+                        size: groupSizes[group],
+                    })
+                }
+                previousGroup = group
+                options.push({
+                    kind: "model",
+                    id: m.path,
+                    hazardTypeId,
+                    hazardTypeLabel,
+                    groupId: isGrouped ? hazardTypeId + "/" + group : null,
+                    groupLabel: group,
+                    label: prettifyGCM(m.display_name),
+                    model: m,
+                })
+            })
+        })
+        return options
     }
 
     findModelByPath(path) {
@@ -318,7 +318,7 @@ function addItemToDict(dict, key, item) {
     dict[key].push(item)
 }
 
-function prettifyScenarioId(id) {
+export function prettifyScenarioId(id) {
     switch (id) {
         case "rcp2p6":
             return "RCP 2.6"
