@@ -252,6 +252,12 @@ export default function HazardViewer(props) {
                 </Typography>
             )
         }
+    } else if (hazardPointState.status === "error") {
+        chart = (
+            <Typography color="error">
+                Could not retrieve indicator values for the pinned location.
+            </Typography>
+        )
     } else chart = <div></div>
 
     return (
