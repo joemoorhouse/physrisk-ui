@@ -2,6 +2,8 @@ import React, { useMemo, useRef, useState } from "react"
 import Autocomplete, { createFilterOptions } from "@mui/material/Autocomplete"
 import Box from "@mui/material/Box"
 import ListSubheader from "@mui/material/ListSubheader"
+import MenuItem from "@mui/material/MenuItem"
+import Select from "@mui/material/Select"
 import TextField from "@mui/material/TextField"
 import ToggleButton from "@mui/material/ToggleButton"
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup"
@@ -9,9 +11,11 @@ import Typography from "@mui/material/Typography"
 import ExpandLess from "@mui/icons-material/ExpandLess"
 import ExpandMore from "@mui/icons-material/ExpandMore"
 import { prettifyScenarioId } from "../data/HazardInventory"
+import { capitalise } from "../data/HazardIndexValues"
 
 export default function HazardMenus(props) {
-    const { hazardMenu, hazardMenuDispatch } = props
+    const { hazardMenu, hazardMenuDispatch, indexValues, indexValuesDispatch } =
+        props
     if (!hazardMenu.selectedModel) return null
 
     const update = (selection) =>
@@ -70,6 +74,43 @@ export default function HazardMenus(props) {
                     onChange={(year) => update({ year })}
                 />
             </Labelled>
+            {indexValues?.allIndexValues?.length > 1 ? (
+                <Labelled
+                    id="hazard-index-label"
+                    label={
+                        capitalise(indexValues.indexDisplayName) +
+                        (indexValues.indexUnits
+                            ? " (" + indexValues.indexUnits + ")"
+                            : "")
+                    }
+                >
+                    <Select
+                        size="small"
+                        labelId="hazard-index-label"
+                        value={indexValues.indexSelectedValue ?? ""}
+                        onChange={(event) =>
+                            indexValuesDispatch({
+                                type: "SELECTED",
+                                payload: {
+                                    indexSelectedValue: event.target.value,
+                                },
+                            })
+                        }
+                        // sized to its content (e.g. "35" or "1000")
+                        sx={{
+                            height: 40,
+                            fontSize: 14,
+                            "& .MuiSelect-select": { pl: 1.25 },
+                        }}
+                    >
+                        {indexValues.availableIndexValues.map((v) => (
+                            <MenuItem key={v} value={v} sx={{ fontSize: 14 }}>
+                                {v}
+                            </MenuItem>
+                        ))}
+                    </Select>
+                </Labelled>
+            ) : null}
         </Box>
     )
 }
